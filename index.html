@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PERDIRFORMANCE LOGI-EVAL V1</title>
+    
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- SheetJS (Excel) -->
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+    <!-- PapaParse (CSV) -->
+    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+
+    <style>
+        body { font-family: 'Marianne', 'Inter', system-ui, sans-serif; background-color: #f1f5f9; }
+        
+        .marianne-bg { background: linear-gradient(135deg, #000091 0%, #3b82f6 100%); }
+        .marianne-text { color: #000091; }
+        
+        /* Animations fluides */
+        .fade-in { animation: fadeIn 0.4s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Style spécifique impression A4 Paysage */
+        @media print {
+            @page { size: A4 landscape; margin: 10mm; }
+            body { background-color: white; color: black !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .no-print { display: none !important; }
+            
+            .print-grid {
+                display: grid !important;
+                grid-template-columns: 1fr 1fr !important;
+                column-gap: 10mm !important;
+                row-gap: 8mm !important;
+                width: 100% !important;
+            }
+            .print-chart-container { 
+                page-break-inside: avoid;
+                height: auto !important; 
+                min-height: 8.5cm;
+                display: flex !important;
+                flex-direction: column;
+                justify-content: flex-start;
+                align-items: center;
+                border: none !important; box-shadow: none !important; margin: 0 !important; padding: 0 !important;
+            }
+            .print-chart-container canvas {
+                max-height: 7cm !important;
+                max-width: 100% !important;
+            }
+            .print-header { display: block !important; text-align: center; margin-bottom: 10px; color: black !important; }
+        }
+        .print-header { display: none; }
+    </style>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Exposition globale pour React
+        window.FB = { doc, getDoc, setDoc };
+        
+        try {
+            const configStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
+            if (configStr) {
+                const app = initializeApp(JSON.parse(configStr));
+                window.FB.db = getFirestore(app);
+                window.FB.auth = getAuth(app);
+                
+                const initAuth = async () => {
+                    if (typeof __initial_auth_token !== 'undefined') {
+                        await signInWithCustomToken(window.FB.auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(window.FB.auth);
+                    }
+                    window.dispatchEvent(new Event('firebase-ready'));
+                };
+                initAuth();
+            }
+        } catch (e) {
+            console.error("Erreur Firebase:", e);
+        }
+    </script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        const normalizeString = (str) => {
+            if (!str) return '';
+            return str.toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        };
+
+        const ChartComponent = ({ title, data, axisLabels, colors, subtitle, drawSeparator, showLabels, isStacked, comment, onCommentChange }) => {
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+
+            // NOUVEAU : Générateur d'analyse factuelle automatique pour Word
+            const autoSummary = useMemo(() => {
+                const datasets = data.datasets;
+                if (!axisLabels || !datasets || datasets.length < 3) return "";
+                
+                if (axisLabels.length === 1) {
+                    const sat = datasets[0].data[0] || 0;
+                    const bes = datasets[2].data[0] || 0;
+                    return `${sat.toFixed(1)}% des élèves ont un niveau satisfaisant, contre ${bes.toFixed(1)}% d'élèves à besoins.`;
+                } else {
+                    let maxSat = -1, maxSatLab = "";
+                    let maxBes = -1, maxBesLab = "";
+                    axisLabels.forEach((label, idx) => {
+                        const sat = datasets[0].data[idx] || 0;
+                        const bes = datasets[2].data[idx] || 0;
+                        if (sat > maxSat) { maxSat = sat; maxSatLab = label; }
+                        if (bes > maxBes) { maxBes = bes; maxBesLab = label; }
+                    });
+                    if (maxSatLab === maxBesLab) {
+                        return `Le groupe "${maxSatLab}" se démarque avec ${maxSat.toFixed(1)}% de réussite, mais concentre aussi le plus fort taux de besoins (${maxBes.toFixed(1)}%).`;
+                    } else {
+                        return `Le plus fort taux de réussite est de ${maxSat.toFixed(1)}% ("${maxSatLab}"). À l'inverse, on observe jusqu'à ${maxBes.toFixed(1)}% de besoins ("${maxBesLab}").`;
+                    }
+                }
+            }, [data, axisLabels]);
+
+            useEffect(() => {
+                if (chartInstance.current) chartInstance.current.destroy();
+                const ctx = chartRef.current.getContext('2d');
+
+                const filteredDatasets = data.datasets.filter(ds => {
+                    if (ds.label === 'Pas de restitution' && ds.counts.every(c => c === 0)) return false;
+                    return true;
+                });
+
+                // Plugin sur-mesure pour tracer la ligne rouge de séparation Filles/Garçons
+                const customPlugins = [];
+                if (drawSeparator) {
+                    customPlugins.push({
+                        id: 'redLineSeparator',
+                        afterDraw: (chart) => {
+                            if (chart.scales.x.ticks.length > 1) {
+                                const chartCtx = chart.ctx;
+                                const xAxis = chart.scales.x;
+                                const yAxis = chart.scales.y;
+                                
+                                chartCtx.save();
+                                chartCtx.beginPath();
+                                for (let i = 0; i < xAxis.ticks.length - 1; i++) {
+                                    const x = (xAxis.getPixelForTick(i) + xAxis.getPixelForTick(i+1)) / 2;
+                                    chartCtx.moveTo(x, yAxis.top);
+                                    chartCtx.lineTo(x, yAxis.bottom);
+                                }
+                                chartCtx.lineWidth = 1.5;
+                                chartCtx.strokeStyle = '#dc2626'; // Rouge vif
+                                chartCtx.stroke();
+                                chartCtx.restore();
+                            }
+                        }
+                    });
+                }
+
+                // NOUVEAU PLUGIN : Affichage des étiquettes (Datalabels) au-dessus des barres
+                if (showLabels) {
+                    customPlugins.push({
+                        id: 'customDatalabels',
+                        afterDatasetsDraw: (chart) => {
+                            const ctx = chart.ctx;
+                            chart.data.datasets.forEach((dataset, i) => {
+                                const meta = chart.getDatasetMeta(i);
+                                if (!meta.hidden) {
+                                    meta.data.forEach((element, index) => {
+                                        const val = dataset.data[index];
+                                        const count = dataset.counts[index];
+                                        
+                                        // On masque les étiquettes des très petites sections en mode empilé pour éviter la superposition
+                                        if (count > 0 && (!isStacked || val > 4)) {
+                                            const position = element.tooltipPosition();
+                                            ctx.fillStyle = '#000000';
+                                            ctx.textAlign = 'center';
+                                            
+                                            if (isStacked) {
+                                                // Mode ADN : Texte centré dans la couleur avec halo blanc pour la lisibilité
+                                                ctx.textBaseline = 'middle';
+                                                ctx.shadowColor = 'white';
+                                                ctx.shadowBlur = 4;
+                                                ctx.font = '900 11px "Inter", sans-serif';
+                                                ctx.fillText(val.toFixed(1) + '%', position.x, position.y - 6);
+                                                ctx.font = 'bold 10px "Inter", sans-serif';
+                                                ctx.fillText(`(${count})`, position.x, position.y + 6);
+                                                ctx.shadowBlur = 0; // Reset
+                                            } else {
+                                                // Mode Bâtons : Texte au-dessus de la barre
+                                                ctx.textBaseline = 'bottom';
+                                                ctx.font = '900 11px "Inter", sans-serif';
+                                                ctx.fillText(val.toFixed(1) + '%', position.x, position.y - 12);
+                                                ctx.font = 'bold 10px "Inter", sans-serif';
+                                                ctx.fillText(`(${count})`, position.x, position.y - 1);
+                                            }
+                                        }
+                                    });
+                                }
+                            });
+                        }
+                    });
+                }
+
+                chartInstance.current = new Chart(ctx, {
+                    type: 'bar',
+                    plugins: customPlugins,
+                    data: {
+                        labels: axisLabels,
+                        datasets: filteredDatasets.map(ds => ({
+                            label: ds.label,
+                            data: ds.data,
+                            backgroundColor: ds.backgroundColor,
+                            borderWidth: 1,
+                            counts: ds.counts,
+                            maxBarThickness: 60,
+                            borderRadius: 4
+                        }))
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { 
+                                position: 'bottom',
+                                labels: { font: { size: 14, weight: 'bold' }, color: '#000000', padding: 20 }
+                            },
+                            title: { 
+                                display: true, 
+                                text: title, 
+                                font: { size: 17, weight: '900' },
+                                color: '#000000',
+                                padding: { top: 10, bottom: 25 }
+                            },
+                            tooltip: {
+                                backgroundColor: 'rgba(0,0,0,0.8)',
+                                titleFont: { size: 14 },
+                                bodyFont: { size: 14 },
+                                padding: 12,
+                                callbacks: {
+                                    label: function(context) {
+                                        const count = context.dataset.counts[context.dataIndex];
+                                        return `${context.dataset.label}: ${context.parsed.y.toFixed(1)}% (${count} élève${count > 1 ? 's' : ''})`;
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            y: {
+                                stacked: isStacked,
+                                beginAtZero: true,
+                                max: 110,
+                                ticks: { 
+                                    color: '#000000', 
+                                    font: { weight: 'bold' },
+                                    stepSize: 20,
+                                    callback: function(value) {
+                                        if (value > 100) return ""; // Masque le nombre "110" pour que l'axe s'arrête visuellement à 100
+                                        return value;
+                                    }
+                                },
+                                title: { display: true, text: 'Pourcentage (%)', font: { weight: 'bold' }, color: '#000000' },
+                                grid: { color: '#e2e8f0' }
+                            },
+                            x: {
+                                stacked: isStacked,
+                                ticks: { color: '#000000', font: { weight: 'bold' } },
+                                title: { display: true, text: subtitle, font: { weight: 'bold' }, color: '#000000' },
+                                grid: { display: false }
+                            }
+                        }
+                    }
+                });
+
+                return () => { if (chartInstance.current) chartInstance.current.destroy(); }
+            }, [title, data, axisLabels, colors, subtitle, drawSeparator, showLabels]);
+
+            return (
+                <div className="w-full bg-white p-4 rounded-xl shadow-sm border border-slate-200 print-chart-container hover:shadow-md transition-shadow flex flex-col" data-summary={autoSummary}>
+                    {/* Correction stricte de la hauteur pour interdire l'écrasement des graphiques */}
+                    <div className="w-full relative flex-none h-[400px] min-h-[400px] print:h-[7.5cm] print:min-h-[7.5cm]">
+                        <canvas ref={chartRef}></canvas>
+                    </div>
+                    
+                    {/* Zone de commentaire */}
+                    <div className="w-full mt-3 pt-3 border-t border-slate-100 no-print">
+                        <textarea 
+                            className="w-full text-sm p-2.5 border border-slate-200 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-slate-700 resize-none h-16 bg-slate-50 transition-colors hover:bg-white"
+                            placeholder="📝 Rédigez une analyse ou un commentaire pédagogique pour cette compétence..."
+                            value={comment || ''}
+                            onChange={(e) => onCommentChange(e.target.value)}
+                        ></textarea>
+                    </div>
+                    
+                    {/* Version imprimable du commentaire */}
+                    {comment && (
+                        <div className="hidden print:block mt-2 w-full text-sm text-black text-left" style={{fontFamily: 'sans-serif'}}>
+                            <span className="font-bold border-b-2 border-blue-900 pb-0.5">Analyse de l'équipe :</span> <i className="ml-1">{comment}</i>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const App = () => {
+            // État des données
+            const [evalFiles, setEvalFiles] = useState([]); 
+            const [studentData, setStudentData] = useState({});
+            const [mergedData, setMergedData] = useState([]);
+            
+            // États UI
+            const [activeTab, setActiveTab] = useState('parametrage');
+            const [selectedNiveau, setSelectedNiveau] = useState('');
+            const [selectedDiscipline, setSelectedDiscipline] = useState('');
+            const [selectedAxis, setSelectedAxis] = useState("Globaux");
+            const [selectedYear, setSelectedYear] = useState('');
+            const [selectedEtablissements, setSelectedEtablissements] = useState([]);
+            const [selectedClasses, setSelectedClasses] = useState([]);
+            const [showChartLabels, setShowChartLabels] = useState(false);
+            const [isStacked, setIsStacked] = useState(false);
+            const [chartComments, setChartComments] = useState({}); // Stockage des commentaires
+
+            // Imports
+            const [uploadError, setUploadError] = useState('');
+            const [isDraggingExcel, setIsDraggingExcel] = useState(false);
+            const [csvText, setCsvText] = useState('');
+
+            // Base de données & Autosave
+            const [isDbReady, setIsDbReady] = useState(false);
+            const [dbStatus, setDbStatus] = useState('');
+
+            const COLORS = {
+                satisfaisant: '#16a34a',
+                fragile: '#f59e0b',
+                besoins: '#dc2626',
+                restitution: '#94a3b8'
+            };
+
+            // Écoute de l'initialisation Firebase
+            useEffect(() => {
+                const handleReady = () => setIsDbReady(true);
+                window.addEventListener('firebase-ready', handleReady);
+                if (window.FB && window.FB.auth && window.FB.auth.currentUser) setIsDbReady(true);
+                return () => window.removeEventListener('firebase-ready', handleReady);
+            }, []);
+
+            const saveToCloud = async (isAuto = false) => {
+                if (!isDbReady || !window.FB.auth.currentUser) return;
+                try {
+                    if (!isAuto) setDbStatus('⏳ Sauvegarde en cours...');
+                    const userId = window.FB.auth.currentUser.uid;
+                    const docRef = window.FB.doc(window.FB.db, 'artifacts', appId, 'users', userId, 'dashboard', 'save');
+                    
+                    const payload = JSON.stringify({
+                        evalFiles, csvText, selectedNiveau, selectedDiscipline, selectedAxis, selectedYear, selectedClasses, selectedEtablissements, chartComments, showChartLabels, isStacked
+                    });
+                    
+                    await window.FB.setDoc(docRef, { data: payload });
+                    if (!isAuto) {
+                        setDbStatus('✅ Sauvegardé avec succès');
+                        setTimeout(() => setDbStatus(''), 4000);
+                    }
+                } catch(e) {
+                    console.error(e);
+                    if (!isAuto) setDbStatus('❌ Erreur de sauvegarde');
+                }
+            };
+
+            const loadFromCloud = async () => {
+                if (!isDbReady || !window.FB.auth.currentUser) return;
+                try {
+                    setDbStatus('⏳ Chargement...');
+                    const userId = window.FB.auth.currentUser.uid;
+                    const docRef = window.FB.doc(window.FB.db, 'artifacts', appId, 'users', userId, 'dashboard', 'save');
+                    const docSnap = await window.FB.getDoc(docRef);
+                    
+                    if (docSnap.exists()) {
+                        const payload = JSON.parse(docSnap.data().data);
+                        setEvalFiles(payload.evalFiles || []);
+                        processCSVText(payload.csvText || ''); // Recalcule les correspondances PRONOTE
+                        
+                        // Restauration des sélections si elles existent
+                        if (payload.selectedNiveau) setSelectedNiveau(payload.selectedNiveau);
+                        if (payload.selectedDiscipline) setSelectedDiscipline(payload.selectedDiscipline);
+                        if (payload.selectedAxis) setSelectedAxis(payload.selectedAxis);
+                        if (payload.selectedYear) setSelectedYear(payload.selectedYear);
+                        if (payload.selectedClasses) setSelectedClasses(payload.selectedClasses);
+                        if (payload.selectedEtablissements) setSelectedEtablissements(payload.selectedEtablissements);
+                        if (payload.chartComments) setChartComments(payload.chartComments);
+                        if (payload.showChartLabels !== undefined) setShowChartLabels(payload.showChartLabels);
+                        if (payload.isStacked !== undefined) setIsStacked(payload.isStacked);
+                        
+                        setDbStatus('✅ Données restaurées');
+                    } else {
+                        setDbStatus('ℹ️ Aucune sauvegarde trouvée');
+                    }
+                    setTimeout(() => setDbStatus(''), 4000);
+                } catch(e) {
+                    console.error(e);
+                    setDbStatus('❌ Erreur de chargement');
+                }
+            };
+
+            const exportLocalSave = () => {
+                const now = new Date();
+                const pad = (n) => n.toString().padStart(2, '0');
+                // Formatage : EVAL_JJ_MM_AAAA_HHhMM.json
+                const dateStr = `${pad(now.getDate())}_${pad(now.getMonth() + 1)}_${now.getFullYear()}_${pad(now.getHours())}h${pad(now.getMinutes())}`;
+                const fileName = `EVAL_${dateStr}.json`;
+
+                const payload = JSON.stringify({
+                    evalFiles, csvText, selectedNiveau, selectedDiscipline, selectedAxis, selectedYear, selectedClasses, selectedEtablissements, chartComments, showChartLabels, isStacked
+                });
+                
+                const blob = new Blob([payload], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                setDbStatus(`✅ Fichier ${fileName} téléchargé`);
+                setTimeout(() => setDbStatus(''), 4000);
+            };
+
+            const importLocalSave = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    try {
+                        const payload = JSON.parse(evt.target.result);
+                        setEvalFiles(payload.evalFiles || []);
+                        processCSVText(payload.csvText || '');
+                        if (payload.selectedNiveau) setSelectedNiveau(payload.selectedNiveau);
+                        if (payload.selectedDiscipline) setSelectedDiscipline(payload.selectedDiscipline);
+                        if (payload.selectedAxis) setSelectedAxis(payload.selectedAxis);
+                        if (payload.selectedYear) setSelectedYear(payload.selectedYear);
+                        if (payload.selectedClasses) setSelectedClasses(payload.selectedClasses);
+                        if (payload.selectedEtablissements) setSelectedEtablissements(payload.selectedEtablissements);
+                        if (payload.chartComments) setChartComments(payload.chartComments);
+                        if (payload.showChartLabels !== undefined) setShowChartLabels(payload.showChartLabels);
+                        if (payload.isStacked !== undefined) setIsStacked(payload.isStacked);
+                        setDbStatus('✅ Fichier local restauré');
+                    } catch (err) {
+                        console.error(err);
+                        setDbStatus('❌ Erreur fichier JSON');
+                    }
+                    setTimeout(() => setDbStatus(''), 4000);
+                };
+                reader.readAsText(file);
+                e.target.value = ''; // Reset de l'input
+            };
+
+            const exportToWord = () => {
+                setDbStatus('⏳ Génération Word...');
+                
+                let wordHtml = `
+                    <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+                    <head>
+                        <meta charset='utf-8'>
+                        <title>Rapport d'évaluations</title>
+                        <style>
+                            body { font-family: 'Calibri', 'Arial', sans-serif; color: #000; }
+                            h1 { text-align: center; color: #000091; font-size: 22pt; margin-bottom: 5px; }
+                            h2 { text-align: center; color: #3b82f6; font-size: 14pt; margin-top: 0; margin-bottom: 30px; text-transform: capitalize; }
+                            .chart-block { margin-bottom: 40px; text-align: center; page-break-inside: avoid; }
+                            .comment { font-size: 11pt; text-align: left; margin-top: 15px; border-left: 3px solid #000091; padding-left: 15px; background-color: #f8fafc; padding: 10px; }
+                        </style>
+                    </head>
+                    <body>
+                        <h1>Évaluations Nationales - Niveau ${selectedNiveau}ème</h1>
+                        <h2>${selectedDiscipline} | ${selectedAxis} ${selectedAxis !== "Évolution multi-annuelle" ? `(${selectedYear})` : ''}</h2>
+                `;
+
+                // Capturer les graphiques
+                const containers = document.querySelectorAll('.print-chart-container');
+                containers.forEach(container => {
+                    const canvas = container.querySelector('canvas');
+                    const textarea = container.querySelector('textarea');
+                    const commentText = textarea ? textarea.value : '';
+                    
+                    // Récupération de l'analyse automatique générée par le composant
+                    const autoSummary = container.getAttribute('data-summary') || '';
+
+                    if (canvas) {
+                        // Capture du canvas en haute qualité
+                        const imgData = canvas.toDataURL('image/png', 1.0);
+                        
+                        // Construction du bloc de texte avec le résumé auto et/ou le commentaire libre
+                        let textContent = '';
+                        if (autoSummary) textContent += `<i><b>Commentaire(s) :</b> ${autoSummary}</i><br>`;
+                        if (commentText) textContent += `${autoSummary ? '<br>' : ''}<b>Analyse de l'équipe pédagogique :</b><br><i>${commentText.replace(/\n/g, '<br>')}</i>`;
+
+                        wordHtml += `
+                            <div class="chart-block">
+                                <img src="${imgData}" style="width: 100%; max-width: 700px; height: auto;" />
+                                ${textContent ? `<div class="comment">${textContent}</div>` : ''}
+                            </div>
+                        `;
+                    }
+                });
+
+                wordHtml += `</body></html>`;
+
+                // Forcer le téléchargement au format .doc
+                const blob = new Blob(['\ufeff', wordHtml], { type: 'application/msword' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `Rapport_Evaluations_${selectedNiveau}e_${selectedDiscipline}.doc`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                setDbStatus('✅ Rapport Word généré');
+                setTimeout(() => setDbStatus(''), 4000);
+            };
+
+            // Auto-Save : Déclenche une sauvegarde 5 secondes après la dernière modification
+            useEffect(() => {
+                if (!isDbReady || (evalFiles.length === 0 && !csvText)) return;
+                const timer = setTimeout(() => saveToCloud(true), 5000);
+                return () => clearTimeout(timer);
+            }, [evalFiles, csvText, selectedNiveau, selectedDiscipline, selectedAxis, selectedYear, selectedClasses, selectedEtablissements, chartComments, showChartLabels, isStacked, isDbReady]);
+
+            const processExcelFile = (file) => {
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    const bstr = evt.target.result;
+                    const wb = XLSX.read(bstr, { type: 'binary' });
+                    let allData = [];
+
+                    wb.SheetNames.forEach(sheetName => {
+                        const match = sheetName.match(/EVA(\d+)_(.+)/i);
+                        if (match) {
+                            const niveau = match[1];
+                            const discipline = match[2].trim().toLowerCase();
+                            const ws = wb.Sheets[sheetName];
+                            const data = XLSX.utils.sheet_to_json(ws);
+
+                            data.forEach(row => {
+                                allData.push({ ...row, _niveau: niveau, _discipline: discipline });
+                            });
+                        }
+                    });
+                    
+                    const yearMatch = file.name.match(/(20\d{2})/);
+                    const defaultYear = yearMatch ? yearMatch[1] : new Date().getFullYear().toString();
+                    const uniqueId = Date.now().toString() + Math.random().toString();
+
+                    setEvalFiles(prev => [...prev, { id: uniqueId, name: file.name, year: defaultYear, data: allData }]);
+                };
+                reader.readAsBinaryString(file);
+            };
+
+            const processCSVText = (text) => {
+                setCsvText(text);
+                if (!text || text.trim() === '') {
+                    setStudentData({});
+                    setUploadError('');
+                    return;
+                }
+                
+                setUploadError('');
+                Papa.parse(text.trim(), {
+                    header: true, skipEmptyLines: true,
+                    complete: function(results) {
+                        const keys = results.meta.fields;
+                        
+                        const getNormCol = (keywords) => keys.find(h => {
+                            if(!h) return false;
+                            const norm = normalizeString(h);
+                            return keywords.some(kw => norm.includes(kw));
+                        });
+
+                        const classeCol = getNormCol(['classe', 'division']);
+                        const sexeCol = getNormCol(['sexe', 'genre']);
+                        const etabCol = getNormCol(['origine', 'etab', 'provenance']);
+                        const prenomCol = getNormCol(['prenom']); 
+                        const nomCol = keys.find(h => h && normalizeString(h).includes('nom') && !normalizeString(h).includes('prenom')); 
+
+                        if (nomCol && prenomCol) {
+                            let dict = {};
+                            results.data.forEach(row => {
+                                const nom = row[nomCol] || '';
+                                const prenom = row[prenomCol] || '';
+                                const cleDirecte = normalizeString(nom) + normalizeString(prenom);
+                                const cleInverse = normalizeString(prenom) + normalizeString(nom);
+                                
+                                let sexeBrut = sexeCol ? (row[sexeCol] || '') : '';
+                                let sexe = 'Non défini';
+                                if (sexeBrut.toUpperCase().trim() === 'G' || sexeBrut.toUpperCase().trim() === 'M') sexe = 'Garçons';
+                                else if (sexeBrut.toUpperCase().trim() === 'F') sexe = 'Filles';
+
+                                let origine = etabCol ? (row[etabCol] || 'Non défini') : 'Non défini';
+                                if (origine !== 'Non défini') {
+                                    origine = origine.replace(/^[0-9A-Z]{8}\s*-\s*/, '');
+                                    const lastDash = origine.lastIndexOf(" - ");
+                                    if (lastDash !== -1) origine = origine.substring(0, lastDash);
+                                    origine = origine.replace(/E\.E\.PU\s*ECOLE\s*(PRIMAIRE|ELEMENTAIRE)\s*PUBLIQUE/i, '').trim();
+                                    origine = origine.replace(/E\.E\.PR\s*ECOLE\s*(PRIMAIRE|ELEMENTAIRE)\s*PRIVEE/i, '').trim();
+                                    origine = origine.replace(/CLG\s*COLLEGE\s*PRIVE?/i, '').trim();
+                                }
+
+                                const info = { sexe, origine: origine || 'Non défini', classe: classeCol ? (row[classeCol] || 'Non défini') : 'Non défini' };
+                                dict[cleDirecte] = info;
+                                dict[cleInverse] = info;
+                            });
+                            setStudentData(dict);
+                        } else {
+                            setUploadError("⚠️ Colonnes 'Nom' et 'Prénom' introuvables dans les données collées.");
+                        }
+                    }
+                });
+            };
+
+            useEffect(() => {
+                if (evalFiles.length > 0) {
+                    let allMerged = [];
+                    evalFiles.forEach(file => {
+                        const mergedFile = file.data.map(row => {
+                            const keys = Object.keys(row);
+                            const prenomCol = keys.find(h => h && normalizeString(h).includes('prenom'));
+                            const nomCol = keys.find(h => h && normalizeString(h).includes('nom') && !normalizeString(h).includes('prenom'));
+
+                            const nom = nomCol ? row[nomCol] : '';
+                            const prenom = prenomCol ? row[prenomCol] : '';
+                            
+                            const cle = normalizeString(nom) + normalizeString(prenom);
+                            const info = studentData[cle] || { sexe: 'Inconnu', origine: 'Inconnu', classe: 'Non défini' };
+                            
+                            const excelClasseKey = keys.find(k => k && (normalizeString(k) === 'classe' || normalizeString(k) === 'division'));
+                            const excelClasse = excelClasseKey ? row[excelClasseKey] : null;
+                            const classeClean = (excelClasse && excelClasse.toString().trim() !== '') ? excelClasse : (info.classe && info.classe !== 'Non défini' ? info.classe : 'Non défini');
+
+                            return {
+                                ...row,
+                                _annee: file.year,
+                                _sexe: info.sexe,
+                                _origine: info.origine,
+                                _classe: classeClean.toString().replace(/\.0$/, '').trim()
+                            };
+                        });
+                        allMerged = [...allMerged, ...mergedFile];
+                    });
+                    setMergedData(allMerged);
+                } else setMergedData([]);
+            }, [evalFiles, studentData]);
+
+            // Listes de sélections automatiques
+            const anneesDispo = useMemo(() => [...new Set(evalFiles.map(f => f.year))].sort().reverse(), [evalFiles]);
+            const niveauxDispo = useMemo(() => [...new Set(mergedData.map(d => d._niveau))].sort((a,b)=>b-a), [mergedData]);
+            const disciplinesDispo = useMemo(() => [...new Set(mergedData.map(d => d._discipline))].sort(), [mergedData]);
+
+            useEffect(() => {
+                if (anneesDispo.length > 0 && !anneesDispo.includes(selectedYear)) setSelectedYear(anneesDispo[0]);
+                if (niveauxDispo.length > 0 && !niveauxDispo.includes(selectedNiveau)) setSelectedNiveau(niveauxDispo[0]);
+                if (disciplinesDispo.length > 0 && !disciplinesDispo.includes(selectedDiscipline)) setSelectedDiscipline(disciplinesDispo[0]);
+            }, [anneesDispo, niveauxDispo, disciplinesDispo, selectedYear, selectedNiveau, selectedDiscipline]);
+
+            const currentCohort = useMemo(() => {
+                if (!mergedData.length) return [];
+                let cohort = mergedData.filter(d => d._niveau === selectedNiveau && d._discipline === selectedDiscipline);
+                if (selectedAxis !== "Évolution multi-annuelle") cohort = cohort.filter(d => d._annee === selectedYear);
+                return cohort;
+            }, [mergedData, selectedNiveau, selectedDiscipline, selectedAxis, selectedYear]);
+
+            // Génération des groupes (Établissements, Classes)
+            const availableEtablissements = useMemo(() => {
+                return Array.from(new Set(currentCohort.map(s => s._origine))).filter(g => g && g !== 'Inconnu' && g !== 'Non défini').sort();
+            }, [currentCohort]);
+
+            useEffect(() => { setSelectedEtablissements(availableEtablissements); }, [availableEtablissements]);
+
+            const availableClasses = useMemo(() => {
+                return Array.from(new Set(currentCohort.map(s => s._classe))).filter(c => c && c !== 'Inconnu' && c !== 'Non défini').sort();
+            }, [currentCohort]);
+
+            useEffect(() => { setSelectedClasses(availableClasses); }, [availableClasses]);
+
+            const chartsToRender = useMemo(() => {
+                if (!currentCohort.length) return [];
+
+                const compMap = new Map();
+                currentCohort.forEach(student => {
+                    Object.keys(student).forEach(key => {
+                        const normKey = normalizeString(key);
+                        const isExcluded = normKey.includes('nom') || normKey.includes('prenom') || normKey === 'classe' || normKey.startsWith('date') || normKey.startsWith('unnamed') || key.startsWith('_');
+                            
+                        if (!isExcluded) {
+                            if (!compMap.has(normKey)) {
+                                compMap.set(normKey, { displayName: key.replace(/\n/g, ' - '), originalKeys: new Set([key]) });
+                            } else {
+                                compMap.get(normKey).originalKeys.add(key);
+                            }
+                        }
+                    });
+                });
+
+                let groups = [];
+                let getGroup = (s) => 'Cohorte';
+                let axeTitle = selectedAxis;
+
+                if (selectedAxis === 'Globaux') groups = ['Cohorte'];
+                else if (selectedAxis === 'Comparatif par Classe') {
+                    groups = availableClasses.filter(c => selectedClasses.includes(c));
+                    getGroup = (s) => s._classe;
+                    axeTitle = "Classes / Divisions";
+                } else if (selectedAxis === 'Comparatif Filles / Garçons') {
+                    groups = Array.from(new Set(currentCohort.map(s => s._sexe))).filter(g => g !== 'Inconnu' && g !== 'Non défini').sort();
+                    getGroup = (s) => s._sexe;
+                } else if (selectedAxis === "Comparatif par Établissement d'origine") {
+                    groups = availableEtablissements.filter(g => selectedEtablissements.includes(g));
+                    getGroup = (s) => s._origine;
+                } else if (selectedAxis === "Évolution multi-annuelle") {
+                    groups = [...anneesDispo].reverse(); 
+                    getGroup = (s) => s._annee;
+                    axeTitle = "Années Scolaires";
+                }
+
+                const individualCharts = Array.from(compMap.values()).map(compData => {
+                    const stats = {};
+                    groups.forEach(g => stats[g] = { 'Satisfaisant': 0, 'Fragile': 0, 'À besoins': 0, 'Pas de restitution': 0, total: 0 });
+
+                    currentCohort.forEach(s => {
+                        const g = getGroup(s);
+                        if (!stats[g]) return;
+                        let val = '';
+                        for (let k of compData.originalKeys) {
+                            if (s[k]) { val = s[k].toString().trim().toLowerCase(); break; }
+                        }
+                        if (val && (val === 'satisfaisant' || val === 'fragile' || val.includes('besoins') || val.includes('restitution'))) {
+                            stats[g].total += 1;
+                            if (val === 'satisfaisant') stats[g]['Satisfaisant'] += 1;
+                            else if (val === 'fragile') stats[g]['Fragile'] += 1;
+                            else if (val.includes('besoins')) stats[g]['À besoins'] += 1;
+                            else if (val.includes('restitution')) stats[g]['Pas de restitution'] += 1;
+                        }
+                    });
+
+                    const ds = [
+                        { label: 'Satisfaisant', bg: COLORS.satisfaisant, d: [], c: [] },
+                        { label: 'Fragile', bg: COLORS.fragile, d: [], c: [] },
+                        { label: 'À besoins', bg: COLORS.besoins, d: [], c: [] },
+                        { label: 'Pas de restitution', bg: COLORS.restitution, d: [], c: [] },
+                    ];
+
+                    groups.forEach(g => {
+                        const st = stats[g];
+                        const t = st.total > 0 ? st.total : 1;
+                        ds[0].c.push(st['Satisfaisant']); ds[0].d.push((st['Satisfaisant'] / t) * 100);
+                        ds[1].c.push(st['Fragile']);      ds[1].d.push((st['Fragile'] / t) * 100);
+                        ds[2].c.push(st['À besoins']);    ds[2].d.push((st['À besoins'] / t) * 100);
+                        ds[3].c.push(st['Pas de restitution']); ds[3].d.push((st['Pas de restitution'] / t) * 100);
+                    });
+
+                    return {
+                        title: compData.displayName, axisLabels: groups, subtitle: axeTitle,
+                        datasets: ds.map(x => ({ label: x.label, backgroundColor: x.bg, data: x.d, counts: x.c }))
+                    };
+                });
+
+                // BILAN GLOBAL pour 'Globaux' ET 'Évolution multi-annuelle'
+                if (selectedAxis === 'Globaux' || selectedAxis === 'Évolution multi-annuelle') {
+                    const sumStats = {};
+                    groups.forEach(g => sumStats[g] = { 'Satisfaisant': 0, 'Fragile': 0, 'À besoins': 0, 'Pas de restitution': 0, total: 0 });
+
+                    currentCohort.forEach(s => {
+                        const g = getGroup(s);
+                        if (!sumStats[g]) return;
+                        Array.from(compMap.values()).forEach(compData => {
+                            let val = '';
+                            for (let k of compData.originalKeys) {
+                                if (s[k]) { val = s[k].toString().trim().toLowerCase(); break; }
+                            }
+                            if (val && (val === 'satisfaisant' || val === 'fragile' || val.includes('besoins') || val.includes('restitution'))) {
+                                sumStats[g].total += 1;
+                                if (val === 'satisfaisant') sumStats[g]['Satisfaisant'] += 1;
+                                else if (val === 'fragile') sumStats[g]['Fragile'] += 1;
+                                else if (val.includes('besoins')) sumStats[g]['À besoins'] += 1;
+                                else if (val.includes('restitution')) sumStats[g]['Pas de restitution'] += 1;
+                            }
+                        });
+                    });
+
+                    const ds = [
+                        { label: 'Satisfaisant', backgroundColor: COLORS.satisfaisant, data: [], counts: [] },
+                        { label: 'Fragile', backgroundColor: COLORS.fragile, data: [], counts: [] },
+                        { label: 'À besoins', backgroundColor: COLORS.besoins, data: [], counts: [] },
+                        { label: 'Pas de restitution', backgroundColor: COLORS.restitution, data: [], counts: [] }
+                    ];
+
+                    let hasData = false;
+                    groups.forEach(g => {
+                        const st = sumStats[g];
+                        if (st.total > 0) hasData = true;
+                        const t = st.total > 0 ? st.total : 1;
+                        ds[0].counts.push(st['Satisfaisant']); ds[0].data.push((st['Satisfaisant'] / t) * 100);
+                        ds[1].counts.push(st['Fragile']);      ds[1].data.push((st['Fragile'] / t) * 100);
+                        ds[2].counts.push(st['À besoins']);    ds[2].data.push((st['À besoins'] / t) * 100);
+                        ds[3].counts.push(st['Pas de restitution']); ds[3].data.push((st['Pas de restitution'] / t) * 100);
+                    });
+
+                    if (hasData) {
+                        return [{
+                            title: "🏆 BILAN GLOBAL (Toutes compétences confondues)",
+                            axisLabels: selectedAxis === 'Globaux' ? ['Synthèse de la discipline'] : groups,
+                            subtitle: selectedAxis === 'Évolution multi-annuelle' ? "Années Scolaires" : "Moyenne de la cohorte",
+                            datasets: ds
+                        }, ...individualCharts];
+                    }
+                }
+                return individualCharts;
+            }, [currentCohort, selectedAxis, selectedEtablissements, selectedClasses, anneesDispo, availableEtablissements, availableClasses]);
+
+            const statsPointage = useMemo(() => {
+                if (!currentCohort.length) return null;
+                const tot = currentCohort.length;
+                const match = currentCohort.filter(d => d._sexe && d._sexe !== 'Inconnu' && d._sexe !== 'Non défini').length;
+                return { total: tot, matched: match, percent: tot > 0 ? Math.round((match/tot)*100) : 0 };
+            }, [currentCohort]);
+
+            return (
+                <div className="min-h-screen pb-12">
+                    <header className="marianne-bg shadow-lg no-print text-white py-5 px-6 sticky top-0 z-50">
+                        <div className="max-w-7xl mx-auto flex flex-col xl:flex-row justify-between items-center gap-4">
+                            <div>
+                                <h1 className="text-2xl md:text-3xl font-black tracking-tight flex flex-wrap items-center gap-2">
+                                    🧭 <span><span className="text-white">PERDIR</span><span className="text-yellow-300">FORMANCE</span> LOGI-EVAL V1 <span className="text-xl font-medium text-blue-100 hidden md:inline-block">| Pour les collèges</span></span>
+                                </h1>
+                                <p className="text-blue-100 font-medium text-sm mt-1 ml-9">Tableau de Bord des Évaluations Nationales</p>
+                            </div>
+                            
+                            <div className="flex flex-wrap items-center gap-3">
+                                {dbStatus && <span className="text-blue-100 text-xs font-bold bg-blue-900/30 px-3 py-1.5 rounded-full animate-pulse">{dbStatus}</span>}
+                                
+                                <label className="bg-blue-800 hover:bg-blue-700 border border-blue-600 shadow-md px-3 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer text-white" title="Charger un paramétrage (.json)">
+                                    📂 Ouvrir
+                                    <input type="file" accept=".json" onChange={importLocalSave} className="hidden" />
+                                </label>
+
+                                <button onClick={exportLocalSave} className="bg-blue-700 hover:bg-blue-600 border border-blue-500 shadow-md px-3 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2" title="Télécharger le paramétrage (.json)">
+                                    💾 Sauvegarder
+                                </button>
+                                
+                                {activeTab === 'dashboard' && (
+                                    <div className="flex bg-white/10 rounded-lg p-1 ml-2 border border-white/20">
+                                        <button onClick={() => window.print()} className="bg-white text-blue-900 px-3 py-1.5 rounded-md text-sm font-bold shadow-sm hover:bg-slate-50 transition-all flex items-center gap-2">
+                                            🖨 PDF
+                                        </button>
+                                        <button onClick={exportToWord} className="bg-blue-50 text-blue-800 px-3 py-1.5 rounded-md text-sm font-bold shadow-sm hover:bg-blue-100 transition-all flex items-center gap-2 ml-1" title="Exporter vers Microsoft Word">
+                                            📝 Word
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Navigation sous forme de "Pillules" */}
+                    <div className="max-w-7xl mx-auto px-6 mt-8 mb-6 no-print">
+                        <div className="flex gap-4 p-1.5 bg-white rounded-xl shadow-sm border border-slate-200 inline-flex">
+                            <button 
+                                className={`px-6 py-2.5 rounded-lg font-bold text-sm transition-all flex items-center gap-2 ${activeTab === 'parametrage' ? 'bg-blue-100 text-blue-800 shadow-sm' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
+                                onClick={() => setActiveTab('parametrage')}
+                            >
+                                ⚙️ Paramétrage & Données
+                            </button>
+                            <button 
+                                className={`px-6 py-2.5 rounded-lg font-bold text-sm transition-all flex items-center gap-2 ${activeTab === 'dashboard' ? 'bg-blue-100 text-blue-800 shadow-sm' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
+                                onClick={() => setActiveTab('dashboard')}
+                            >
+                                📊 Tableau de bord
+                            </button>
+                        </div>
+                    </div>
+
+                    <main className="max-w-7xl mx-auto px-6 print:mt-0 print:px-0">
+                        {activeTab === 'parametrage' && (
+                            <section className="bg-white p-8 rounded-2xl shadow-md border border-slate-200 fade-in">
+                                <h2 className="text-xl font-bold text-slate-800 mb-6 border-b pb-4 flex items-center gap-2">
+                                    📥 Importation des bases de données
+                                </h2>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    <div 
+                                        className={`relative border-2 border-dashed p-8 rounded-xl text-center transition-all cursor-pointer flex flex-col items-center justify-center min-h-[200px]
+                                            ${isDraggingExcel ? 'border-blue-500 bg-blue-50 scale-[1.02]' : 'border-slate-300 bg-slate-50 hover:bg-slate-100 hover:border-blue-400'}`}
+                                        onDragOver={(e) => { e.preventDefault(); setIsDraggingExcel(true); }}
+                                        onDragLeave={(e) => { e.preventDefault(); setIsDraggingExcel(false); }}
+                                        onDrop={(e) => { 
+                                            e.preventDefault(); setIsDraggingExcel(false); 
+                                            if (e.dataTransfer.files) Array.from(e.dataTransfer.files).forEach(processExcelFile);
+                                        }}
+                                        onClick={() => document.getElementById('excelInput').click()}
+                                    >
+                                        <input id="excelInput" type="file" multiple accept=".xlsx" onChange={(e) => Array.from(e.target.files).forEach(processExcelFile)} className="hidden" />
+                                        <span className="text-5xl mb-4">📗</span>
+                                        <h3 className="text-base font-bold text-slate-700 mb-2">Fichiers Évaluations (.xlsx)</h3>
+                                        <p className="text-sm text-slate-500 font-medium">Glissez vos fichiers ici ou cliquez pour parcourir.</p>
+                                    </div>
+
+                                    <div className="relative border p-6 rounded-xl flex flex-col bg-slate-50 border-slate-300 focus-within:border-blue-500 focus-within:bg-blue-50 transition-colors shadow-inner">
+                                        <div className="flex items-center justify-between mb-4">
+                                        <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                                            📋 Base Élèves PRONOTE (Copier-Coller)
+                                        </h3>
+                                        {Object.keys(studentData).length > 0 && (
+                                            <span className="text-xs bg-green-100 text-green-700 px-3 py-1 rounded-full font-bold shadow-sm">
+                                                ✓ {Math.floor(Object.keys(studentData).length / 2)} élèves traités
+                                            </span>
+                                        )}
+                                    </div>
+                                    <textarea 
+                                            className="w-full flex-1 p-4 text-xs font-mono bg-white border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+                                            placeholder="Ouvrez l'export PRONOTE/SIÈCLE dans Excel, faites un Copier, et Collez le texte ici..."
+                                            value={csvText} onChange={(e) => processCSVText(e.target.value)}
+                                        ></textarea>
+                                        {uploadError && <div className="mt-3 text-red-600 font-bold text-xs bg-red-50 p-2 rounded-lg border border-red-200">⚠ {uploadError}</div>}
+                                    </div>
+                                </div>
+
+                                {evalFiles.length > 0 && (
+                                    <div className="mt-8 border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                                        <div className="bg-slate-100 px-4 py-3 text-sm font-bold text-slate-700 border-b border-slate-200 flex justify-between items-center">
+                                            <span>📚 Fichiers d'évaluations chargés ({evalFiles.length})</span>
+                                            <span className="text-xs font-normal text-slate-500">Vérifiez les années de référence ci-dessous</span>
+                                        </div>
+                                        <div className="divide-y divide-slate-100">
+                                            {evalFiles.map(file => (
+                                                <div key={file.id} className="p-4 flex flex-wrap items-center gap-4 bg-white hover:bg-slate-50 transition-colors">
+                                                    <div className="flex-1 min-w-[200px]">
+                                                        <p className="text-sm font-bold text-blue-900 truncate">{file.name}</p>
+                                                        <p className="text-xs text-slate-500 font-medium mt-1">{file.data.length} lignes analysées</p>
+                                                    </div>
+                                                    <div className="flex items-center gap-3">
+                                                        <label className="text-xs font-bold text-slate-600">Année :</label>
+                                                        <input 
+                                                            type="text" value={file.year} 
+                                                            onChange={(e) => setEvalFiles(prev => prev.map(f => f.id === file.id ? {...f, year: e.target.value} : f))}
+                                                            className="w-20 text-center font-bold text-sm border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:ring-0 p-1.5"
+                                                        />
+                                                        <button onClick={() => setEvalFiles(prev => prev.filter(f => f.id !== file.id))} className="text-red-500 hover:bg-red-50 p-2 rounded-lg transition-colors">
+                                                            ❌
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </section>
+                        )}
+
+                        {activeTab === 'dashboard' && (
+                            <div className="fade-in print:block">
+                                <section className="bg-white p-6 rounded-2xl shadow-md border border-slate-200 mb-8 no-print">
+                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-700 mb-2">🎓 Niveau</label>
+                                            <select value={selectedNiveau} onChange={(e) => setSelectedNiveau(e.target.value)} className="w-full bg-slate-50 border-slate-200 rounded-lg focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 border font-semibold">
+                                                {niveauxDispo.map(n => <option key={n} value={n}>{n}ème</option>)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-700 mb-2">📖 Discipline</label>
+                                            <select value={selectedDiscipline} onChange={(e) => setSelectedDiscipline(e.target.value)} className="w-full bg-slate-50 border-slate-200 rounded-lg focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 border font-semibold capitalize">
+                                                {disciplinesDispo.map(d => <option key={d} value={d}>{d}</option>)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-700 mb-2">🎯 Axe d'étude</label>
+                                            <select value={selectedAxis} onChange={(e) => setSelectedAxis(e.target.value)} className="w-full bg-blue-50 border-blue-200 text-blue-900 rounded-lg focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 border font-bold">
+                                                <option value="Globaux">🌍 Résultats Globaux</option>
+                                                <option value="Comparatif par Classe">🏫 Comparatif par Classe</option>
+                                                <option value="Comparatif Filles / Garçons">🚻 Comparatif Filles / Garçons</option>
+                                                <option value="Comparatif par Établissement d'origine">🎒 Établissement d'origine</option>
+                                                <option value="Évolution multi-annuelle">📉 Évolution multi-annuelle</option>
+                                            </select>
+                                        </div>
+                                        {selectedAxis !== "Évolution multi-annuelle" && (
+                                            <div>
+                                                <label className="block text-sm font-bold text-slate-700 mb-2">📅 Année</label>
+                                                <select value={selectedYear} onChange={(e) => setSelectedYear(e.target.value)} className="w-full bg-slate-50 border-slate-200 rounded-lg focus:border-blue-500 focus:ring-1 focus:ring-blue-500 p-2.5 border font-semibold">
+                                                    {anneesDispo.map(a => <option key={a} value={a}>{a}</option>)}
+                                                </select>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Filtres de classes */}
+                                    {selectedAxis === "Comparatif par Classe" && availableClasses.length > 0 && (
+                                        <div className="mt-6 pt-5 border-t border-slate-100">
+                                            <div className="flex justify-between items-center mb-3">
+                                                <label className="text-sm font-bold text-slate-700">Filtre des classes :</label>
+                                                <div className="space-x-3">
+                                                    <button onClick={() => setSelectedClasses(availableClasses)} className="text-xs text-blue-600 hover:underline font-bold bg-blue-50 px-2 py-1 rounded">Tout cocher</button>
+                                                    <button onClick={() => setSelectedClasses([])} className="text-xs text-slate-500 hover:underline font-bold bg-slate-50 px-2 py-1 rounded">Tout décocher</button>
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                {availableClasses.map(cls => (
+                                                    <label key={cls} className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 text-sm cursor-pointer transition-all font-semibold ${selectedClasses.includes(cls) ? 'bg-blue-50 border-blue-400 text-blue-900 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+                                                        <input type="checkbox" className="hidden" checked={selectedClasses.includes(cls)} onChange={() => setSelectedClasses(p => p.includes(cls) ? p.filter(c => c !== cls) : [...p, cls])} />
+                                                        {selectedClasses.includes(cls) ? '☑' : '☐'} {cls}
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Filtres Établissements */}
+                                    {selectedAxis === "Comparatif par Établissement d'origine" && availableEtablissements.length > 0 && (
+                                        <div className="mt-6 pt-5 border-t border-slate-100">
+                                            <div className="flex justify-between items-center mb-3">
+                                                <label className="text-sm font-bold text-slate-700">Filtre des écoles :</label>
+                                                <div className="space-x-3">
+                                                    <button onClick={() => setSelectedEtablissements(availableEtablissements)} className="text-xs text-blue-600 hover:underline font-bold bg-blue-50 px-2 py-1 rounded">Tout cocher</button>
+                                                    <button onClick={() => setSelectedEtablissements([])} className="text-xs text-slate-500 hover:underline font-bold bg-slate-50 px-2 py-1 rounded">Tout décocher</button>
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                {availableEtablissements.map(etab => (
+                                                    <label key={etab} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border-2 text-sm cursor-pointer transition-all font-semibold ${selectedEtablissements.includes(etab) ? 'bg-blue-50 border-blue-400 text-blue-900 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+                                                        <input type="checkbox" className="hidden" checked={selectedEtablissements.includes(etab)} onChange={() => setSelectedEtablissements(p => p.includes(etab) ? p.filter(e => e !== etab) : [...p, etab])} />
+                                                        {selectedEtablissements.includes(etab) ? '☑' : '☐'} {etab}
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* NOUVEAU : Options d'affichage dynamiques */}
+                                    <div className="mt-6 flex flex-wrap items-center gap-4">
+                                        <div className="flex items-center gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200 shadow-sm hover:bg-slate-100 transition-colors cursor-pointer" onClick={() => setShowChartLabels(!showChartLabels)}>
+                                            <input 
+                                                type="checkbox" 
+                                                checked={showChartLabels}
+                                                onChange={(e) => setShowChartLabels(e.target.checked)}
+                                                className="w-5 h-5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer pointer-events-none"
+                                            />
+                                            <label className="text-sm font-bold text-slate-700 cursor-pointer select-none">
+                                                📊 Afficher les valeurs (% et effectifs)
+                                            </label>
+                                        </div>
+
+                                        <div className="flex items-center gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200 shadow-sm hover:bg-slate-100 transition-colors cursor-pointer" onClick={() => setIsStacked(!isStacked)}>
+                                            <input 
+                                                type="checkbox" 
+                                                checked={isStacked}
+                                                onChange={(e) => setIsStacked(e.target.checked)}
+                                                className="w-5 h-5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer pointer-events-none"
+                                            />
+                                            <label className="text-sm font-bold text-slate-700 cursor-pointer select-none">
+                                                🧬 Vue en diagramme ADN (Barres empilées)
+                                            </label>
+                                        </div>
+                                    </div>
+                                </section>
+
+                                {chartsToRender.length > 0 ? (
+                                    <section>
+                                        <div className="print-header">
+                                            <h2 style={{fontSize: '28px', fontWeight: '900', color: 'black'}}>Évaluations Nationales - Niveau {selectedNiveau}ème</h2>
+                                            <p style={{fontSize: '18px', fontWeight: 'bold', color: 'black', textTransform: 'capitalize', marginTop: '5px'}}>
+                                                {selectedDiscipline} | {selectedAxis} {selectedAxis !== "Évolution multi-annuelle" && `(${selectedYear})`}
+                                            </p>
+                                        </div>
+                                        
+                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 print-grid">
+                                            {chartsToRender.map((chartData, idx) => {
+                                                const commentKey = `${selectedNiveau}_${selectedDiscipline}_${selectedAxis}_${chartData.title}`;
+                                                return (
+                                                    <ChartComponent 
+                                                        key={idx}
+                                                        title={chartData.title}
+                                                        data={chartData}
+                                                        axisLabels={chartData.axisLabels}
+                                                        colors={COLORS}
+                                                        subtitle={chartData.subtitle}
+                                                        drawSeparator={selectedAxis === 'Comparatif Filles / Garçons'}
+                                                        showLabels={showChartLabels}
+                                                        isStacked={isStacked}
+                                                        comment={chartComments[commentKey]}
+                                                        onCommentChange={(text) => setChartComments(prev => ({ ...prev, [commentKey]: text }))}
+                                                    />
+                                                );
+                                            })}
+                                        </div>
+                                    </section>
+                                ) : evalFiles.length > 0 ? (
+                                    <div className="text-center py-16 text-slate-500 font-medium bg-white rounded-2xl border border-slate-200 shadow-sm no-print">
+                                        📭 Aucune donnée exploitable pour ces critères.
+                                    </div>
+                                ) : null}
+                            </div>
+                        )}
+                    </main>
+
+                    {/* Pied de page / Footer */}
+                    <footer className="mt-12 pb-8 text-center text-sm text-slate-500 no-print fade-in">
+                        <div className="max-w-7xl mx-auto px-6 border-t border-slate-200 pt-6">
+                            <p className="font-bold text-slate-700">LOGI-EVAL a été conçu par Yannis CHRISTON | 2026.</p>
+                            <p className="mt-1 text-xs">Les données sont exécutées sur le navigateur en local. Le logiciel respecte le RGPD et a été développé grâce à l'IA générative.</p>
+                        </div>
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
