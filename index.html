@@ -595,8 +595,9 @@
                         const classeCol = getNormCol(['classe', 'division']);
                         const sexeCol = getNormCol(['sexe', 'genre']);
                         const etabCol = getNormCol(['origine', 'etab', 'provenance']);
-                        const prenomCol = getNormCol(['prenom']); 
-                        const nomCol = keys.find(h => h && normalizeString(h).includes('nom') && !normalizeString(h).includes('prenom')); 
+                        
+                        const prenomCol = keys.find(h => h && ['prenom', 'prenomdeleleve', 'prenoms', 'prenomeleve'].includes(normalizeString(h))); 
+                        const nomCol = keys.find(h => h && ['nom', 'nomdeleleve', 'noms', 'nomdefamille', 'nomusage', 'nomdusage', 'nomeleve'].includes(normalizeString(h))); 
 
                         if (nomCol && prenomCol) {
                             let dict = {};
@@ -639,8 +640,8 @@
                     evalFiles.forEach(file => {
                         const mergedFile = file.data.map(row => {
                             const keys = Object.keys(row);
-                            const prenomCol = keys.find(h => h && normalizeString(h).includes('prenom'));
-                            const nomCol = keys.find(h => h && normalizeString(h).includes('nom') && !normalizeString(h).includes('prenom'));
+                            const prenomCol = keys.find(h => h && ['prenom', 'prenomdeleleve', 'prenoms', 'prenomeleve'].includes(normalizeString(h)));
+                            const nomCol = keys.find(h => h && ['nom', 'nomdeleleve', 'noms', 'nomdefamille', 'nomusage', 'nomdusage', 'nomeleve'].includes(normalizeString(h)));
 
                             const nom = nomCol ? row[nomCol] : '';
                             const prenom = prenomCol ? row[prenomCol] : '';
@@ -704,7 +705,10 @@
                 currentCohort.forEach(student => {
                     Object.keys(student).forEach(key => {
                         const normKey = normalizeString(key);
-                        const isExcluded = normKey.includes('nom') || normKey.includes('prenom') || normKey === 'classe' || normKey.startsWith('date') || normKey.startsWith('unnamed') || key.startsWith('_');
+                        const isExcluded = ['nom', 'nomdeleleve', 'noms', 'nomdefamille', 'nomusage', 'nomdusage', 'nomeleve'].includes(normKey) || 
+                                           ['prenom', 'prenomdeleleve', 'prenoms', 'prenomeleve'].includes(normKey) || 
+                                           normKey === 'classe' || normKey === 'division' || normKey === 'sexe' || normKey === 'genre' || 
+                                           normKey.startsWith('date') || normKey.startsWith('unnamed') || key.startsWith('_');
                             
                         if (!isExcluded) {
                             if (!compMap.has(normKey)) {
