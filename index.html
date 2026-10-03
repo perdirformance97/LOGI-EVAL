@@ -934,9 +934,19 @@
                                             </span>
                                         )}
                                     </div>
+                                    
+                                    <div className="flex items-start gap-2.5 mb-3 px-1">
+                                        <span className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse mt-0.5 flex-shrink-0 shadow-sm"></span>
+                                        <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                                            Sur Pronote ou EDT, allez sur RESSOURCES\ELEVES\CLASSES;<br/>
+                                            Dans personnalisation de la liste (Engrenage) : Faites passer Etab. d'origine à droite, puis validez;<br/>
+                                            Copiez dans le presse papier en .csv et collez dans ce champ.
+                                        </p>
+                                    </div>
+
                                     <textarea 
                                             className="w-full flex-1 p-4 text-xs font-mono bg-white border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
-                                            placeholder="Ouvrez l'export PRONOTE/SIÈCLE dans Excel, faites un Copier, et Collez le texte ici..."
+                                            placeholder="Collez les données PRONOTE ici..."
                                             value={csvText} onChange={(e) => processCSVText(e.target.value)}
                                         ></textarea>
                                         {uploadError && <div className="mt-3 text-red-600 font-bold text-xs bg-red-50 p-2 rounded-lg border border-red-200">⚠ {uploadError}</div>}
