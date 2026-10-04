@@ -332,7 +332,8 @@
             const [showChartLabels, setShowChartLabels] = useState(false);
             const [isStacked, setIsStacked] = useState(false);
             const [chartComments, setChartComments] = useState({}); // Stockage des commentaires
-
+            const [etabMapping, setEtabMapping] = useState({}); // Mapping pour renommer les établissements
+            const [isRenameExpanded, setIsRenameExpanded] = useState(false); // NOUVEAU: État pour plier/déplier le module
             // Imports
             const [uploadError, setUploadError] = useState('');
             const [isDraggingExcel, setIsDraggingExcel] = useState(false);
@@ -365,7 +366,7 @@
                     const docRef = window.FB.doc(window.FB.db, 'artifacts', appId, 'users', userId, 'dashboard', 'save');
                     
                     const payload = JSON.stringify({
-                        evalFiles, csvText, selectedNiveau, selectedDiscipline, selectedAxis, selectedYear, selectedClasses, selectedEtablissements, chartComments, showChartLabels, isStacked
+                        evalFiles, csvText, selectedNiveau, selectedDiscipline, selectedAxis, selectedYear, selectedClasses, selectedEtablissements, chartComments, showChartLabels, isStacked, etabMapping
                     });
                     
                     await window.FB.setDoc(docRef, { data: payload });
@@ -400,6 +401,7 @@
                         if (payload.selectedClasses) setSelectedClasses(payload.selectedClasses);
                         if (payload.selectedEtablissements) setSelectedEtablissements(payload.selectedEtablissements);
                         if (payload.chartComments) setChartComments(payload.chartComments);
+                        if (payload.etabMapping) setEtabMapping(payload.etabMapping);
                         if (payload.showChartLabels !== undefined) setShowChartLabels(payload.showChartLabels);
                         if (payload.isStacked !== undefined) setIsStacked(payload.isStacked);
                         
@@ -422,7 +424,7 @@
                 const fileName = `EVAL_${dateStr}.json`;
 
                 const payload = JSON.stringify({
-                    evalFiles, csvText, selectedNiveau, selectedDiscipline, selectedAxis, selectedYear, selectedClasses, selectedEtablissements, chartComments, showChartLabels, isStacked
+                    evalFiles, csvText, selectedNiveau, selectedDiscipline, selectedAxis, selectedYear, selectedClasses, selectedEtablissements, chartComments, showChartLabels, isStacked, etabMapping
                 });
                 
                 const blob = new Blob([payload], { type: "application/json" });
@@ -455,6 +457,7 @@
                         if (payload.selectedClasses) setSelectedClasses(payload.selectedClasses);
                         if (payload.selectedEtablissements) setSelectedEtablissements(payload.selectedEtablissements);
                         if (payload.chartComments) setChartComments(payload.chartComments);
+                        if (payload.etabMapping) setEtabMapping(payload.etabMapping);
                         if (payload.showChartLabels !== undefined) setShowChartLabels(payload.showChartLabels);
                         if (payload.isStacked !== undefined) setIsStacked(payload.isStacked);
                         setDbStatus('✅ Fichier local restauré');
@@ -539,7 +542,7 @@
                 if (!isDbReady || (evalFiles.length === 0 && !csvText)) return;
                 const timer = setTimeout(() => saveToCloud(true), 5000);
                 return () => clearTimeout(timer);
-            }, [evalFiles, csvText, selectedNiveau, selectedDiscipline, selectedAxis, selectedYear, selectedClasses, selectedEtablissements, chartComments, showChartLabels, isStacked, isDbReady]);
+            }, [evalFiles, csvText, selectedNiveau, selectedDiscipline, selectedAxis, selectedYear, selectedClasses, selectedEtablissements, chartComments, showChartLabels, isStacked, etabMapping, isDbReady]);
 
             const processExcelFile = (file) => {
                 if (!file) return;
@@ -653,11 +656,16 @@
                             const excelClasse = excelClasseKey ? row[excelClasseKey] : null;
                             const classeClean = (excelClasse && excelClasse.toString().trim() !== '') ? excelClasse : (info.classe && info.classe !== 'Non défini' ? info.classe : 'Non défini');
 
+                            const finalOrigine = (etabMapping[info.origine] !== undefined && etabMapping[info.origine].trim() !== '') 
+                                                 ? etabMapping[info.origine] 
+                                                 : info.origine;
+
                             return {
                                 ...row,
                                 _annee: file.year,
                                 _sexe: info.sexe,
-                                _origine: info.origine,
+                                _origineBrute: info.origine,
+                                _origine: finalOrigine,
                                 _classe: classeClean.toString().replace(/\.0$/, '').trim()
                             };
                         });
@@ -665,7 +673,16 @@
                     });
                     setMergedData(allMerged);
                 } else setMergedData([]);
-            }, [evalFiles, studentData]);
+            }, [evalFiles, studentData, etabMapping]);
+
+            // Extraction des établissements uniques pour le renommage
+            const uniqueEtabs = useMemo(() => {
+                const etabs = new Set();
+                Object.values(studentData).forEach(info => {
+                    if (info.origine && info.origine !== 'Non défini' && info.origine !== 'Inconnu') etabs.add(info.origine);
+                });
+                return Array.from(etabs).sort();
+            }, [studentData]);
 
             // Listes de sélections automatiques
             const anneesDispo = useMemo(() => [...new Set(evalFiles.map(f => f.year))].sort().reverse(), [evalFiles]);
@@ -845,6 +862,7 @@
 
             return (
                 <div className="min-h-screen pb-12">
+                    {}
                     <header className="marianne-bg shadow-lg no-print text-white py-5 px-6 sticky top-0 z-50">
                         <div className="max-w-7xl mx-auto flex flex-col xl:flex-row justify-between items-center gap-4">
                             <div>
@@ -898,6 +916,7 @@
                         </div>
                     </div>
 
+                    {}
                     <main className="max-w-7xl mx-auto px-6 print:mt-0 print:px-0">
                         {activeTab === 'parametrage' && (
                             <section className="bg-white p-8 rounded-2xl shadow-md border border-slate-200 fade-in">
@@ -925,28 +944,27 @@
 
                                     <div className="relative border p-6 rounded-xl flex flex-col bg-slate-50 border-slate-300 focus-within:border-blue-500 focus-within:bg-blue-50 transition-colors shadow-inner">
                                         <div className="flex items-center justify-between mb-4">
-                                        <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
-                                            📋 Base Élèves PRONOTE (Copier-Coller)
-                                        </h3>
-                                        {Object.keys(studentData).length > 0 && (
-                                            <span className="text-xs bg-green-100 text-green-700 px-3 py-1 rounded-full font-bold shadow-sm">
-                                                ✓ {Math.floor(Object.keys(studentData).length / 2)} élèves traités
-                                            </span>
-                                        )}
-                                    </div>
-                                    
-                                    <div className="flex items-start gap-2.5 mb-3 px-1">
-                                        <span className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse mt-0.5 flex-shrink-0 shadow-sm"></span>
-                                        <p className="text-xs text-slate-600 font-medium leading-relaxed">
-                                            Sur Pronote ou EDT, allez sur RESSOURCES\ELEVES\CLASSES;<br/>
-                                            Dans personnalisation de la liste (Engrenage) : Faites passer Etab. d'origine à droite, puis validez;<br/>
-                                            Copiez dans le presse papier en .csv et collez dans ce champ.
-                                        </p>
-                                    </div>
+                                            <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                                                📋 Base Élèves (Copier-Coller)
+                                            </h3>
+                                            {Object.keys(studentData).length > 0 && (
+                                                <span className="text-xs bg-green-100 text-green-700 px-3 py-1 rounded-full font-bold shadow-sm">
+                                                    ✓ {Math.floor(Object.keys(studentData).length / 2)} élèves traités
+                                                </span>
+                                            )}
+                                        </div>
+                                        
+                                        <div className="flex items-start gap-2.5 mb-3 px-1">
+                                            <span className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse mt-0.5 flex-shrink-0 shadow-sm"></span>
+                                            <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                                                A partir du client EDT, allez sur ELEVES\CLASSES (élèves affectés dans une classe), puis, dans personnalisation de la liste (🔧) : Faites passer Etab. d'origine à droite, puis validez;<br/>
+                                                Copiez dans le presse papier en .csv et collez dans ce champ !
+                                            </p>
+                                        </div>
 
-                                    <textarea 
+                                        <textarea 
                                             className="w-full flex-1 p-4 text-xs font-mono bg-white border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
-                                            placeholder="Collez les données PRONOTE ici..."
+                                            placeholder="Collez les données ici..."
                                             value={csvText} onChange={(e) => processCSVText(e.target.value)}
                                         ></textarea>
                                         {uploadError && <div className="mt-3 text-red-600 font-bold text-xs bg-red-50 p-2 rounded-lg border border-red-200">⚠ {uploadError}</div>}
@@ -1060,6 +1078,39 @@
                                                     </label>
                                                 ))}
                                             </div>
+
+                                            {/* MODULE DE RENOMMAGE (Ici dans le dashboard) */}
+                                            {uniqueEtabs.length > 0 && (
+                                                <div className="mt-6 border border-slate-200 rounded-xl overflow-hidden shadow-sm fade-in">
+                                                    <div 
+                                                        className="bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700 border-b border-slate-200 flex items-center gap-2 cursor-pointer hover:bg-slate-100 transition-colors"
+                                                        onClick={() => setIsRenameExpanded(!isRenameExpanded)}
+                                                    >
+                                                        <span>🎒 Renommer les établissements d'origine</span>
+                                                        <span className="text-xs font-normal text-slate-500 ml-auto hidden md:inline">Modifiez les noms pour uniformiser vos graphiques</span>
+                                                        <span className="ml-2 bg-white px-2 py-1 rounded shadow-sm border border-slate-200 text-xs flex items-center gap-1 text-slate-600">
+                                                            {isRenameExpanded ? '▲ Replier' : '▼ Déplier'}
+                                                        </span>
+                                                    </div>
+                                                    
+                                                    {isRenameExpanded && (
+                                                        <div className="p-4 bg-white grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                                            {uniqueEtabs.map(etab => (
+                                                                <div key={etab} className="flex flex-col gap-1.5">
+                                                                    <label className="text-xs font-bold text-slate-500 truncate" title={etab}>{etab}</label>
+                                                                    <input 
+                                                                        type="text" 
+                                                                        className="w-full text-sm font-medium border border-slate-200 rounded-lg p-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-shadow shadow-sm"
+                                                                        placeholder="Nouveau nom..."
+                                                                        value={etabMapping[etab] !== undefined ? etabMapping[etab] : etab}
+                                                                        onChange={(e) => setEtabMapping(prev => ({ ...prev, [etab]: e.target.value }))}
+                                                                    />
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
                                     )}
 
